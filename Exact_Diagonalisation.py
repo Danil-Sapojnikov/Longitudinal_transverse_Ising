@@ -9,15 +9,18 @@
 """
 
 import numpy as np
-import matplotlib as plt
+import matplotlib.pyplot as plt
 import scipy as sp
 
 #----------------------------------------------------------------------
 
-N = 10 # Number of elements in chain (N>=2)
+N = 4 # Number of elements in chain (N>=2)
 J = 1 # Exchange coupling constant
 H_X = 0 # Transverse field
 H_Z = 0 # Longitudinal field
+
+NUM_EVALS = 4
+TOL = 10e-10
 
 SAVETEXT = False
 SAVEFIG = False
@@ -87,6 +90,34 @@ Hamiltonian = -exchange - transverse - longitudinal
 
 #----------------------------------------------------------------------
 
-E,V = sp.sparse.linalg.eigs(Hamiltonian, k = 12)
+evals,evecs = sp.sparse.linalg.eigs(Hamiltonian, k = NUM_EVALS, which = 'SR')
 
-print(E)
+#print(evals_rounded)
+#print(np.abs(evecs[:, 3])**2)
+#print(np.sum(np.abs(evecs[:, 3])**2))
+
+#print(evals)
+#print(len(evals))
+#print(np.real(evecs_rounded[:,0]))
+
+#----------------------------------------------------------------------
+
+from itertools import product
+
+spin_configs = list(product([1, -1], repeat=N))
+
+for n in range(NUM_EVALS):
+    print(f"\nEigenvalue {n}: E = {evals[n].real:.6f}")
+
+    for i, config in enumerate(spin_configs):
+        coefficient = evecs[i, n]
+        probability = abs(coefficient)**2
+
+        if probability > 1e-10:
+            print(
+                config,
+                #f"coefficient = {coefficient:.6f}",
+                f"probability = {probability:.6f}"
+            )
+
+#----------------------------------------------------------------------

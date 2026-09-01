@@ -16,14 +16,16 @@ import scipy as sp
 
 N = 8 # Number of elements in chain (N>=2)
 J = 1 # Exchange coupling constant
-H_X = 0.5 # Transverse field
-H_Z = 0.5 # Longitudinal field
+H_X = 0.3 # Transverse field
+H_Z = 0.1 # Longitudinal field
 
-NUM_EVALS = 3
-TOL = 1e-10
+NUM_EVALS = 100 # Number of Eigenvalues calculated
+#TOL = 1e-10
+NUM_BINS = 10
 
 SAVETEXT = False
 SAVEFIG = False
+FIGNAME = 'Test.png'
 
 # The identity matrix and 4 Pauli matrices in sparse form
 I = sp.sparse.csr_array(np.array([[1,0],[0,1]]))
@@ -32,255 +34,154 @@ Y = sp.sparse.csr_array(np.array([[0,-1j],[1j,0]]))
 Z = sp.sparse.csr_array(np.array([[1,0],[0,-1]]))
 
 #----------------------------------------------------------------------
+# Assemble the Z_i and X_i arrays relevant within the Hamiltonian for the corresponding length of chain
 
-sigmaZ_list = []
+def assembleZ_i():
 
-for i in range(0,N):
-    if i == 0:
-        sigmaZ_i = Z
-    else:
-        sigmaZ_i = I
+    sigmaZ_list = []
 
-    for k in range(1,N):
-        if k == i:
-            sigmaZ_i = sp.sparse.kron(sigmaZ_i,Z)
+    for i in range(0,N):
+        if i == 0:
+            sigmaZ_i = Z
         else:
-            sigmaZ_i = sp.sparse.kron(sigmaZ_i,I)
+            sigmaZ_i = I
 
-    sigmaZ_list.append(sigmaZ_i) #add .toarray() for nicer layout
-
-#print(sigmaZ_list)
-
-sigmaX_list = []
-
-for i in range(0,N):
-    if i == 0:
-        sigmaX_i = X
-    else:
-        sigmaX_i = I
-
-    for k in range(1,N):
-        if k == i:
-            sigmaX_i = sp.sparse.kron(sigmaX_i,X)
-        else:
-            sigmaX_i = sp.sparse.kron(sigmaX_i,I)
-
-    sigmaX_list.append(sigmaX_i)
-
-#----------------------------------------------------------------------
-
-exchange = sp.sparse.csr_array(np.zeros((2**N,2**N)))
-for i in range(0,N-1):
-    exchange += sigmaZ_list[i]@sigmaZ_list[i+1]
-exchange = J * (exchange + sigmaZ_list[N-1]@sigmaZ_list[0])
-
-transverse = sp.sparse.csr_array(np.zeros((2**N,2**N)))
-for i in range(0,N):
-    transverse += sigmaX_list[i]
-transverse *= H_X
-
-longitudinal = sp.sparse.csr_array(np.zeros((2**N,2**N)))
-for i in range(0,N):
-    longitudinal += sigmaX_list[i]
-longitudinal *= H_Z
-
-Hamiltonian = -exchange - transverse - longitudinal
-
-#print(Hamiltonian.toarray())
-
-#----------------------------------------------------------------------
-
-evals,evecs = sp.sparse.linalg.eigs(Hamiltonian, k = NUM_EVALS, which = 'SR')
-
-#print(evals_rounded)
-#print(np.abs(evecs[:, 3])**2)
-#print(np.sum(np.abs(evecs[:, 3])**2))
-
-#print(evals)
-#print(len(evals))
-#print(np.real(evecs_rounded[:,0]))
-
-#----------------------------------------------------------------------
-
-# Translates the energy eigenstates into the spin eigenstates that constitute it. (Made with ChatGPT)
-
-from itertools import product
-
-spin_configs = list(product([1, -1], repeat=N))
-
-for n in range(NUM_EVALS):
-    print(f"\nEigenvalue {n}: E = {evals[n].real:.6f}")
-
-    for i, config in enumerate(spin_configs):
-        coefficient = evecs[i, n]
-        probability = abs(coefficient)**2
-
-        if probability > 1e-10:
-            print(
-                config,
-                #f"coefficient = {coefficient:.6f}",
-                f"probability = {probability:.6f}"
-            )
-
-# ============================================================
-# Function to plot one eigenvector
-# ============================================================
-
-def plot_eigenvector(eigenvalue, eigenvector, eigenvector_number,
-                     threshold=1e-8):
-
-    # Find basis states that actually contribute
-    amplitudes = np.asarray(eigenvector).flatten()
-
-    #contributing = np.where(np.abs(amplitudes) > threshold)[0]
-    contributing = np.where(np.abs(amplitudes)**2 > 0.01)[0]
-
-    n_states = len(contributing)
-
-    # One row for every contributing spin configuration
-    fig, axes = plt.subplots(
-        n_states,
-        1,
-        figsize=(8, max(2.5, 2.0 * n_states)),
-        squeeze=False
-    )
-
-    axes = axes.flatten()
-
-    fig.suptitle(
-        f"Eigenvector {eigenvector_number+1}\n"
-        f"$E = {eigenvalue.real:.6f}$",
-        fontsize=16
-    )
-
-    # --------------------------------------------------------
-    # Plot each contributing spin configuration
-    # --------------------------------------------------------
-
-    for row, basis_index in enumerate(contributing):
-
-        ax = axes[row]
-
-        spins = spin_configs[basis_index]
-        amplitude = amplitudes[basis_index]
-
-        # Real part -- your Hamiltonian is real
-        amplitude = np.real(amplitude)
-
-        # ----------------------------------------------------
-        # Draw chain
-        # ----------------------------------------------------
-
-        x = np.arange(N)
-
-        ax.plot(
-            x,
-            np.zeros(N),
-            'k-',
-            linewidth=1
-        )
-
-        # ----------------------------------------------------
-        # Draw spins as arrows
-        # ----------------------------------------------------
-
-        for i, spin in enumerate(spins):
-
-            if spin == 1:
-                # Up spin
-                ax.arrow(
-                    i, 0,
-                    0, 0.8,
-                    head_width=0.12,
-                    head_length=0.15,
-                    length_includes_head=True
-                )
-
-                spin_label = r"$\uparrow$"
-
+        for k in range(1,N):
+            if k == i:
+                sigmaZ_i = sp.sparse.kron(sigmaZ_i,Z)
             else:
-                # Down spin
-                ax.arrow(
-                    i, 0,
-                    0, -0.8,
-                    head_width=0.12,
-                    head_length=0.15,
-                    length_includes_head=True
-                )
+                sigmaZ_i = sp.sparse.kron(sigmaZ_i,I)
 
-                spin_label = r"$\downarrow$"
+        sigmaZ_list.append(sigmaZ_i) #add .toarray() for nicer print layout
 
-            # Site number
-            ax.text(
-                i,
-                1.05,
-                f"{i+1}",
-                ha='center',
-                va='bottom',
-                fontsize=11
-            )
+    #print(sigmaZ_list)
+    return sigmaZ_list
 
-        # ----------------------------------------------------
-        # Configuration label
-        # ----------------------------------------------------
+def assembleX_i():
 
-        config_string = ''.join(
-            '↑' if s == 1 else '↓'
-            for s in spins
-        )
+    sigmaX_list = []
 
-        ax.text(
-            N + 0.3,
-            0,
-            rf"$|{config_string}\rangle$",
-            va='center',
-            fontsize=13
-        )
+    for i in range(0,N):
+        if i == 0:
+            sigmaX_i = X
+        else:
+            sigmaX_i = I
 
-        # ----------------------------------------------------
-        # Amplitude and probability
-        # ----------------------------------------------------
+        for k in range(1,N):
+            if k == i:
+                sigmaX_i = sp.sparse.kron(sigmaX_i,X)
+            else:
+                sigmaX_i = sp.sparse.kron(sigmaX_i,I)
 
-        probability = abs(amplitude)**2
+        sigmaX_list.append(sigmaX_i)
 
-        ax.text(
-            -0.8,
-            0,
-            rf"$c={amplitude:.3f}$"
-            "\n"
-            rf"$P(s)={probability:.3f}$",
-            ha='right',
-            va='center',
-            fontsize=11
-        )
+    #print(sigmaX_list)
+    return sigmaX_list
 
-        # Formatting
-        ax.set_xlim(-1.2, N + 1.5)
-        ax.set_ylim(-1.3, 1.3)
-
-        ax.set_xticks(x)
-        ax.set_xticklabels([f"Site {i+1}" for i in range(N)])
-
-        ax.set_yticks([])
-
-        # Remove unnecessary borders
-        ax.spines['left'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.spines['top'].set_visible(False)
-
-    plt.tight_layout()
-    plt.show()
-
-
-# ============================================================
-# Plot every eigenvector
-# ============================================================
-
-for n in range(NUM_EVALS):
-
-    plot_eigenvector(
-        evals[n],
-        evecs[:, n],
-        n
-    )
 #----------------------------------------------------------------------
+# Assemble the Longitudinal + Transverse field Ising Hamiltonian
+
+def assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,h_z,h_x):
+
+    exchange = sp.sparse.csr_array(np.zeros((2**N,2**N)))
+    for i in range(0,N-1):
+        exchange += sigmaZ_list[i]@sigmaZ_list[i+1]
+    exchange = J * (exchange + sigmaZ_list[N-1]@sigmaZ_list[0])
+
+    transverse = sp.sparse.csr_array(np.zeros((2**N,2**N)))
+    for i in range(0,N):
+        transverse += sigmaX_list[i]
+    transverse *= h_x
+
+    longitudinal = sp.sparse.csr_array(np.zeros((2**N,2**N)))
+    for i in range(0,N):
+        longitudinal += sigmaZ_list[i]
+    longitudinal *= h_z
+
+    Hamiltonian = -exchange - transverse - longitudinal
+
+    #print(Hamiltonian.toarray())
+    return Hamiltonian
+
+#----------------------------------------------------------------------
+# Find the Eigenvalues and Eigenvectors of the Hamiltonian, then the energy spacings
+
+def find_eigs(Hamiltonian):
+
+    evals,evecs = sp.sparse.linalg.eigs(Hamiltonian, k = NUM_EVALS, which = 'SR')
+
+    return evals,evecs
+
+def find_spacings(eigvals):
+
+    eigvals = np.sort(eigvals)
+    eigvals_shifted = np.insert(eigvals, 0, eigvals[0])
+    eigvals_shifted = np.delete(eigvals_shifted, -1)
+
+    eigvals_space = eigvals - eigvals_shifted
+
+    mean = np.mean(eigvals_space)
+    eigvals_space_scaled = eigvals_space/mean
+
+    return (eigvals_space,eigvals_space_scaled)
+
+#----------------------------------------------------------------------
+# Output functions
+
+def print_eigs(evals,evecs):
+
+    for i in range(len(evals)):
+        print(f"\nEigenvalue {i+1}")
+        print(f"{evals[i].real:.6f}")
+        print(f"{np.round(np.real(evecs[:,i]),3)}")
+
+def poisson_dist(x):
+
+    return np.exp(-x)
+
+def wigner_dist(x):
+
+    power = -np.pi / 4 * x**2
+
+    return np.pi/2 * x * np.exp(power)
+
+def spacings_hist(scaled_spacings):
+
+    x = np.linspace(0,5,1000)
+    scaled_spacings = np.delete(scaled_spacings, np.where(scaled_spacings > 10*np.mean(scaled_spacings)))
+
+    plt.hist(scaled_spacings, bins=NUM_BINS, density = True, label = 'Calulated Differences')
+    plt.plot(x, wigner_dist(x), label = 'GOE')
+    plt.plot(x, poisson_dist(x), label = 'Poisson Distribution', color = 'b')
+    
+    plt.legend()
+    plt.title('Energy Gap Probability Distribution')
+    plt.xlabel(r'$\frac{s}{<s>}$')
+    plt.ylabel('Probability Density')
+    
+    if SAVEFIG:
+        plt.savefig(FIGNAME, transparent = True)
+        
+    plt.show()
+    plt.close()
+
+#----------------------------------------------------------------------
+# Main code (Call funcitons)
+
+def main():
+    sigmaZ_list = assembleZ_i()
+    sigmaX_list = assembleX_i()
+
+    Ising_Ham = assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,H_Z,H_X)
+
+    eigenvalues,eigenvectors = find_eigs(Ising_Ham)
+    eigenvalue_spacings = find_spacings(eigenvalues)
+
+    print(eigenvalue_spacings[0])
+    spacings_hist(eigenvalue_spacings[1])
+    #print_eigs(eigenvalues,eigenvectors)
+
+#----------------------------------------------------------------------
+
+if __name__ == "__main__":
+    main()

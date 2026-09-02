@@ -165,6 +165,58 @@ def spacings_hist(scaled_spacings):
     plt.show()
     plt.close()
 
+def create_multiple_plots(plots, figsize=(12,8)):
+    """ 
+    Creates a figure with a variable number of subplots. [Created with the aid of ChatGPT]
+
+    Parameters 
+    ---------- 
+    plots : list of dict Each dictionary describes one subplot. It should contain: 
+        - "plot": a function that accepts an Axes object 
+        - "title": optional title for the subplot 
+        - "xlabel": optional x-axis label 
+        - "ylabel": optional y-axis label 
+        - "legend": optional subplot legend
+    
+    figsize : tuple 
+        Size of the overall figure. 
+    
+    Returns 
+    ------- 
+    fig : matplotlib.figure.Figure 
+    """
+
+    n_plots = len(plots) 
+    n_cols = 2 
+    n_rows = int(np.ceil(n_plots / n_cols))
+
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
+    axes = np.atleast_1d(axes).flatten()
+
+    for ax, plot_info in zip(axes, plots): 
+        plot_info["plot"](ax)
+
+        if "title" in plot_info:
+            ax.set_title(plot_info["title"])
+
+        if "xlabel" in plot_info:
+            ax.set_xlabel(plot_info["xlabel"])
+ 
+        if "ylabel" in plot_info:
+            ax.set_ylabel(plot_info["ylabel"])
+
+        if "legend" in plot_info:
+            ax.legend()
+
+
+    for ax in axes[n_plots:]: 
+        ax.set_visible(False) 
+
+    fig.tight_layout() 
+
+    return fig
+
+
 #----------------------------------------------------------------------
 # Main code (Call funcitons)
 
@@ -180,6 +232,13 @@ def main():
     print(eigenvalue_spacings[0])
     spacings_hist(eigenvalue_spacings[1])
     #print_eigs(eigenvalues,eigenvectors)
+
+
+    #fig = create_multiple_plots(plots_list)
+    if SAVEFIG:
+        plt.savefig(FIGNAME, transparent = True) 
+    plt.show()
+    plt.close()
 
 #----------------------------------------------------------------------
 

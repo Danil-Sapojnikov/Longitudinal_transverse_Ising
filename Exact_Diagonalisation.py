@@ -125,16 +125,6 @@ def find_spacings(eigvals):
 
     return (eigvals_space,eigvals_space_scaled)
 
-#----------------------------------------------------------------------
-# Output functions
-
-def print_eigs(evals,evecs):
-
-    for i in range(len(evals)):
-        print(f"\nEigenvalue {i+1}")
-        print(f"{evals[i].real:.6f}")
-        print(f"{np.round(np.real(evecs[:,i]),3)}")
-
 def poisson_dist(x):
 
     return np.exp(-x)
@@ -144,6 +134,16 @@ def wigner_dist(x):
     power = -np.pi / 4 * x**2
 
     return np.pi/2 * x * np.exp(power)
+
+#----------------------------------------------------------------------
+# Output functions
+
+def print_eigs(evals,evecs):
+
+    for i in range(len(evals)):
+        print(f"\nEigenvalue {i+1}")
+        print(f"{evals[i].real:.6f}")
+        print(f"{np.round(np.real(evecs[:,i]),3)}")
 
 def spacings_hist(scaled_spacings):
 
@@ -172,11 +172,12 @@ def create_multiple_plots(plots, figsize=(12,8)):
     Parameters 
     ---------- 
     plots : list of dict Each dictionary describes one subplot. It should contain: 
-        - "plot": a function that accepts an Axes object 
+        - "plot": a function that accepts an Axes object and the data for plots/scatters/hist
+        - "plotdata": a (linspaced) numpy array that is used as the x values or a tuple of arrays, e.g (histdata,xdata,ydata,...) for a scatter plot or multiple subplots
         - "title": optional title for the subplot 
         - "xlabel": optional x-axis label 
         - "ylabel": optional y-axis label 
-        - "legend": optional subplot legend
+        - "legend": optional subplot legend True or False
     
     figsize : tuple 
         Size of the overall figure. 
@@ -194,7 +195,7 @@ def create_multiple_plots(plots, figsize=(12,8)):
     axes = np.atleast_1d(axes).flatten()
 
     for ax, plot_info in zip(axes, plots): 
-        plot_info["plot"](ax)
+        plot_info["plot"](ax,plot_info["plotdata"])
 
         if "title" in plot_info:
             ax.set_title(plot_info["title"])
@@ -205,7 +206,7 @@ def create_multiple_plots(plots, figsize=(12,8)):
         if "ylabel" in plot_info:
             ax.set_ylabel(plot_info["ylabel"])
 
-        if "legend" in plot_info:
+        if "legend":
             ax.legend()
 
 
@@ -216,9 +217,29 @@ def create_multiple_plots(plots, figsize=(12,8)):
 
     return fig
 
+def spacings_plot(ax,plot_data):
+    """
+    Plots a histogram of the spacings data with a Poisson and Wigner distribution for comparison.
+
+    Parameters
+    ----------
+    ax: Axes object to plot the graph on
+    plot_data: tuple of data (histdata,x) where x is a linspaced array for the distributions.
+    """
+    scaled_spacings,x = plot_data
+    scaled_spacings = np.delete(scaled_spacings, np.where(scaled_spacings > 10*np.mean(scaled_spacings))) #removes large values to siplify display
+
+    ax.hist(scaled_spacings, bins=NUM_BINS, density = True, label = 'Calulated Differences')
+    ax.plot(x,poisson_dist(x), label = 'Poisson Distribution', color = 'b')
+    ax.plot(x,wigner_dist(x), label = 'GOE')
+
+def assemble_spacings_plot_dict():
+    return
 
 #----------------------------------------------------------------------
 # Main code (Call funcitons)
+
+x = np.linspace(0,5,1000)
 
 def main():
     sigmaZ_list = assembleZ_i()
@@ -230,11 +251,26 @@ def main():
     eigenvalue_spacings = find_spacings(eigenvalues)
 
     print(eigenvalue_spacings[0])
-    spacings_hist(eigenvalue_spacings[1])
+    #spacings_hist(eigenvalue_spacings[1])
     #print_eigs(eigenvalues,eigenvectors)
 
+    plots_list = [{
+        "plot": spacings_plot,
+        "plotdata": (eigenvalue_spacings,np.linspace(0,5,1000)),
+        "title": 'Energy Gap Probability Distribution',
+        "xlabel": r'$\frac{s}{<s>}$',
+        "ylabel": 'Probability Density',
+        "legend": True
+        },
+        {"plot": spacings_plot,
+        "plotdata": (eigenvalue_spacings,np.linspace(0,5,1000)),
+        "title": 'Energy Gap Probability Distribution',
+        "xlabel": r'$\frac{s}{<s>}$',
+        "ylabel": 'Probability Density',
+        "legend": False
+        }]
 
-    #fig = create_multiple_plots(plots_list)
+    fig = create_multiple_plots(plots_list)
     if SAVEFIG:
         plt.savefig(FIGNAME, transparent = True) 
     plt.show()

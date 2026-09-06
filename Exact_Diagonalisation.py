@@ -14,14 +14,14 @@ import scipy as sp
 
 #----------------------------------------------------------------------
 
-N = 8 # Number of elements in chain (N>=2)
+N = 12 # Number of elements in chain (N>=2)
 J = 1 # Exchange coupling constant
 H_X = 0.3 # Transverse field
 H_Z = 0.1 # Longitudinal field
 
-NUM_EVALS = 100 # Number of Eigenvalues calculated
+NUM_EVALS = 1000 # Number of Eigenvalues calculated
 #TOL = 1e-10
-NUM_BINS = 10
+NUM_BINS = 25
 
 SAVETEXT = False
 SAVEFIG = False
@@ -83,6 +83,8 @@ def assembleX_i():
 
 def assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,h_z,h_x):
 
+    print(f"\nAssembling Hamiltonian with transverse field h_x = {h_x} and longitudinal field h_z = {h_z}.")
+
     exchange = sp.sparse.csr_array(np.zeros((2**N,2**N)))
     for i in range(0,N-1):
         exchange += sigmaZ_list[i]@sigmaZ_list[i+1]
@@ -100,6 +102,7 @@ def assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,h_z,h_x):
 
     Hamiltonian = -exchange - transverse - longitudinal
 
+    print("Hamiltonian assembled.")
     #print(Hamiltonian.toarray())
     return Hamiltonian
 
@@ -108,7 +111,10 @@ def assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,h_z,h_x):
 
 def find_eigs(Hamiltonian):
 
+    print(f"\nFinding energy eigenvalues.")
     evals,evecs = sp.sparse.linalg.eigs(Hamiltonian, k = NUM_EVALS, which = 'SR')
+    print(f"{len(evals)} out of {NUM_EVALS} eigenvalues found.")
+    print(f"{len(np.real_if_close(evals[~np.isnan(x)],tol=100))} out of {len(evals)} eigenvalues are real numbers.")
 
     return evals,evecs
 
@@ -144,26 +150,6 @@ def print_eigs(evals,evecs):
         print(f"\nEigenvalue {i+1}")
         print(f"{evals[i].real:.6f}")
         print(f"{np.round(np.real(evecs[:,i]),3)}")
-
-def spacings_hist(scaled_spacings):
-
-    x = np.linspace(0,5,1000)
-    scaled_spacings = np.delete(scaled_spacings, np.where(scaled_spacings > 10*np.mean(scaled_spacings)))
-
-    plt.hist(scaled_spacings, bins=NUM_BINS, density = True, label = 'Calulated Differences')
-    plt.plot(x, wigner_dist(x), label = 'GOE')
-    plt.plot(x, poisson_dist(x), label = 'Poisson Distribution', color = 'b')
-    
-    plt.legend()
-    plt.title('Energy Gap Probability Distribution')
-    plt.xlabel(r'$\frac{s}{<s>}$')
-    plt.ylabel('Probability Density')
-    
-    if SAVEFIG:
-        plt.savefig(FIGNAME, transparent = True)
-        
-    plt.show()
-    plt.close()
 
 def create_multiple_plots(plots, figsize=(12,8)):
     """ 
@@ -206,9 +192,6 @@ def create_multiple_plots(plots, figsize=(12,8)):
         if "ylabel" in plot_info:
             ax.set_ylabel(plot_info["ylabel"])
 
-        if "legend":
-            ax.legend()
-
 
     for ax in axes[n_plots:]: 
         ax.set_visible(False) 
@@ -232,6 +215,7 @@ def spacings_plot(ax,plot_data):
     ax.hist(scaled_spacings, bins=NUM_BINS, density = True, label = 'Calulated Differences')
     ax.plot(x,poisson_dist(x), label = 'Poisson Distribution', color = 'b')
     ax.plot(x,wigner_dist(x), label = 'GOE')
+    ax.legend()
 
 def assemble_spacings_plot_dict():
     return
@@ -250,24 +234,17 @@ def main():
     eigenvalues,eigenvectors = find_eigs(Ising_Ham)
     eigenvalue_spacings = find_spacings(eigenvalues)
 
-    print(eigenvalue_spacings[0])
-    #spacings_hist(eigenvalue_spacings[1])
+    eigenvalue_spacings_real = np.real_if_close(eigenvalue_spacings,tol=100)
+
+    #print(eigenvalue_spacings[0])
     #print_eigs(eigenvalues,eigenvectors)
 
     plots_list = [{
         "plot": spacings_plot,
-        "plotdata": (eigenvalue_spacings,np.linspace(0,5,1000)),
+        "plotdata": (eigenvalue_spacings_real[1],np.linspace(0,5,1000)),
         "title": 'Energy Gap Probability Distribution',
         "xlabel": r'$\frac{s}{<s>}$',
         "ylabel": 'Probability Density',
-        "legend": True
-        },
-        {"plot": spacings_plot,
-        "plotdata": (eigenvalue_spacings,np.linspace(0,5,1000)),
-        "title": 'Energy Gap Probability Distribution',
-        "xlabel": r'$\frac{s}{<s>}$',
-        "ylabel": 'Probability Density',
-        "legend": False
         }]
 
     fig = create_multiple_plots(plots_list)

@@ -14,10 +14,10 @@ import scipy as sp
 
 #----------------------------------------------------------------------
 
-N = 12 # Number of elements in chain (N>=2)
+N = 10 # Number of elements in chain (N>=2)
 J = 1 # Exchange coupling constant
-H_X = 0.3 # Transverse field
-H_Z = 0.1 # Longitudinal field
+H_X = 1.05 # Transverse field
+H_Z = 0 # Longitudinal field
 
 NUM_EVALS = 1000 # Number of Eigenvalues calculated
 #TOL = 1e-10
@@ -25,7 +25,8 @@ NUM_BINS = 25
 
 SAVETEXT = False
 SAVEFIG = False
-FIGNAME = 'Test.png'
+FIGNAME = 'EigenvalueSpacings2.png'
+FIGTITLE = 'Comparison of the Numerical and Analytic solutions for the TFIM' #fr'Level spacings for the $h_x$ = {H_X} TFIM'
 
 # The identity matrix and 4 Pauli matrices in sparse form
 I = sp.sparse.csr_array(np.array([[1,0],[0,1]]))
@@ -88,7 +89,8 @@ def assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,h_z,h_x):
     exchange = sp.sparse.csr_array(np.zeros((2**N,2**N)))
     for i in range(0,N-1):
         exchange += sigmaZ_list[i]@sigmaZ_list[i+1]
-    exchange = J * (exchange + sigmaZ_list[N-1]@sigmaZ_list[0])
+    exchange = J * (exchange + sigmaZ_list[N-1]@sigmaZ_list[0]) # Introduces periodic boundary conditions
+    #exchange = J * (exchange + sigmaZ_list[N-1]@I) # Open Boundary conditions?
 
     transverse = sp.sparse.csr_array(np.zeros((2**N,2**N)))
     for i in range(0,N):
@@ -112,9 +114,10 @@ def assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,h_z,h_x):
 def find_eigs(Hamiltonian):
 
     print(f"\nFinding energy eigenvalues.")
-    evals,evecs = sp.sparse.linalg.eigs(Hamiltonian, k = NUM_EVALS, which = 'SR')
+    #evals,evecs = sp.sparse.linalg.eigs(Hamiltonian, k = NUM_EVALS, which = 'SR')
+    evals,evecs = sp.sparse.linalg.eigsh(Hamiltonian, k = NUM_EVALS, which = 'SA')
     print(f"{len(evals)} out of {NUM_EVALS} eigenvalues found.")
-    print(f"{len(np.real_if_close(evals[~np.isnan(x)],tol=100))} out of {len(evals)} eigenvalues are real numbers.")
+    #print(f"{len(np.real_if_close(evals[~np.isnan(evals)],tol=100))} out of {len(evals)} eigenvalues are real numbers.")
 
     return evals,evecs
 
@@ -142,6 +145,52 @@ def wigner_dist(x):
     return np.pi/2 * x * np.exp(power)
 
 #----------------------------------------------------------------------
+# Analytic TFIM (h_z = 0)
+
+def tfim_exact_energies(h_x):
+    """
+    Exact TFIM many-body spectrum for a periodic chain.
+
+    Parameters
+    ----------
+    N : Number of spins. (Even)
+    J : Ising coupling.
+    h_x : Transverse field.
+    parity : +1 or -1 
+
+    Returns
+    -------
+    energies : numpy array, exact many-body energies in the relevant parity sector.
+    """
+
+    if N % 2 != 0:
+        raise ValueError("N must be even.")
+
+    energies = []
+
+    for parity in (-1,+1):
+        if parity == +1:
+            ks = (2*np.arange(N) + 1) * np.pi / N
+        elif parity == -1:
+            ks = 2*np.arange(N) * np.pi / N
+        else:
+            raise ValueError("parity must be +1 or -1")
+
+        eps = 2*np.sqrt(J**2 + h_x**2 - 2*J*h_x*np.cos(ks)) # Single-particle energies
+        E0 = -0.5 * np.sum(eps) # Ground-state energy
+
+        for state in range(2**N):
+            occupation = np.array(
+                [(state >> k) & 1 for k in range(N)]
+            ) # Uses binary representations of numbers to create an array with the possible occupancies [e.g. 9 = 1001 = (1,0,0,1)]
+
+            if (-1)**np.sum(occupation) == parity: # Only considers states with the correct parity
+                E = E0 + np.sum(occupation * eps)
+                energies.append(E)
+
+    return np.sort(np.array(energies))
+
+#----------------------------------------------------------------------
 # Output functions
 
 def print_eigs(evals,evecs):
@@ -149,9 +198,9 @@ def print_eigs(evals,evecs):
     for i in range(len(evals)):
         print(f"\nEigenvalue {i+1}")
         print(f"{evals[i].real:.6f}")
-        print(f"{np.round(np.real(evecs[:,i]),3)}")
+        #print(f"{np.round(np.real(evecs[:,i]),3)}")
 
-def create_multiple_plots(plots, figsize=(12,8)):
+def create_multiple_plots(plots, figsize=(12,8),title=None):
     """ 
     Creates a figure with a variable number of subplots. [Created with the aid of ChatGPT]
 
@@ -173,6 +222,7 @@ def create_multiple_plots(plots, figsize=(12,8)):
     fig : matplotlib.figure.Figure 
     """
 
+    print(f"Creating figure.")
     n_plots = len(plots) 
     n_cols = 2 
     n_rows = int(np.ceil(n_plots / n_cols))
@@ -196,7 +246,10 @@ def create_multiple_plots(plots, figsize=(12,8)):
     for ax in axes[n_plots:]: 
         ax.set_visible(False) 
 
-    fig.tight_layout() 
+    if title:
+        fig.suptitle(title, fontsize=16)
+
+    fig.tight_layout(rect=[0, 0, 1, 0.98]) 
 
     return fig
 
@@ -210,44 +263,96 @@ def spacings_plot(ax,plot_data):
     plot_data: tuple of data (histdata,x) where x is a linspaced array for the distributions.
     """
     scaled_spacings,x = plot_data
-    scaled_spacings = np.delete(scaled_spacings, np.where(scaled_spacings > 10*np.mean(scaled_spacings))) #removes large values to siplify display
+    scaled_spacings = np.delete(scaled_spacings, np.where(scaled_spacings > 7*np.mean(scaled_spacings))) #removes large values to siplify display
 
     ax.hist(scaled_spacings, bins=NUM_BINS, density = True, label = 'Calulated Differences')
     ax.plot(x,poisson_dist(x), label = 'Poisson Distribution', color = 'b')
     ax.plot(x,wigner_dist(x), label = 'GOE')
     ax.legend()
 
-def assemble_spacings_plot_dict():
-    return
+def assemble_spacings_plot_dict(data,h_z):
+    """
+    Creates the required dictionary for the create_multiple_plots_function.
 
+    Parameters
+    ----------
+    data: numpy array or tuple of arrays
+    h_z: h_z value for title
+
+    Returns
+    ----------
+    Dictionary
+    """
+
+    plot_dict = {
+        "plot": spacings_plot,
+        "plotdata": data,
+        "title": fr'Energy Gap Probability Distribution for $h_z$ = {h_z}',
+        "xlabel": r'$\frac{s}{<s>}$',
+        "ylabel": 'Probability Density',
+    }
+
+    return plot_dict
+
+def exact_comparison_plot(ax,plot_data):
+    """
+    Plots two scatter plots of the exact tfim against the calculated one.
+
+    Parameters
+    ----------
+    ax: Axes object to plot the graph on
+    plot_data: tuple of data (num_data,ana_data).
+    """
+    num_data,ana_data = plot_data
+
+    i = np.arange(len(num_data))
+
+    ax.scatter(i,ana_data, marker = "s", color = 'y', label = 'Analytically calculated eigenvalues')
+    ax.scatter(i,num_data, marker = "x", color = 'b', label = 'Numerically solved eigenvalues')
+
+    ax.legend()
 #----------------------------------------------------------------------
 # Main code (Call funcitons)
-
-x = np.linspace(0,5,1000)
 
 def main():
     sigmaZ_list = assembleZ_i()
     sigmaX_list = assembleX_i()
 
+    H_Z_list = [0.1,0.2,0.3,0.4] #[0,0.2,0.4,0.6,0.8,1.0]
+    plots_list = []
+
+
+    #for i in range(len(H_Z_list)):
+
+    #    Ising_Ham = assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,H_Z_list[i],H_X)
+
+    #    eigenvalues,eigenvectors = find_eigs(Ising_Ham)
+    #    eigenvalue_spacings = find_spacings(eigenvalues)
+
+    #    x = np.linspace(0,7,1000)
+
+    #    eigenvalue_spacings_real = np.real_if_close(eigenvalue_spacings,tol=100)
+    #    plots_list.append(assemble_spacings_plot_dict((eigenvalue_spacings_real[1],x),H_Z_list[i]))
+
+
     Ising_Ham = assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,H_Z,H_X)
-
     eigenvalues,eigenvectors = find_eigs(Ising_Ham)
-    eigenvalue_spacings = find_spacings(eigenvalues)
-
-    eigenvalue_spacings_real = np.real_if_close(eigenvalue_spacings,tol=100)
 
     #print(eigenvalue_spacings[0])
-    #print_eigs(eigenvalues,eigenvectors)
+    #print(eigenvalues)
+    exact = tfim_exact_energies(H_X)[:NUM_EVALS]
+    dif = eigenvalues-exact
+    print(f"Maximum deviation: {np.max(dif)}")
 
     plots_list = [{
-        "plot": spacings_plot,
-        "plotdata": (eigenvalue_spacings_real[1],np.linspace(0,5,1000)),
-        "title": 'Energy Gap Probability Distribution',
-        "xlabel": r'$\frac{s}{<s>}$',
-        "ylabel": 'Probability Density',
-        }]
-
-    fig = create_multiple_plots(plots_list)
+        "plot": exact_comparison_plot,
+        "plotdata": (eigenvalues,exact),
+        "title": fr'$h_x$ = {H_X}',
+        "xlabel": 'Eigenvalue Number',
+        "ylabel": 'Energy',
+    }]
+    
+    fig = create_multiple_plots(plots_list,title = FIGTITLE)
     if SAVEFIG:
         plt.savefig(FIGNAME, transparent = True) 
     plt.show()

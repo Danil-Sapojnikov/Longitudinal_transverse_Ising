@@ -14,18 +14,18 @@ import scipy as sp
 
 #----------------------------------------------------------------------
 
-N = 10 # Number of elements in chain (N>=2)
+N = 12 # Number of elements in chain (N>=2)
 J = 1 # Exchange coupling constant
 H_X = 1.05 # Transverse field
 H_Z = 0 # Longitudinal field
 
-NUM_EVALS = 1000 # Number of Eigenvalues calculated
+NUM_EVALS = 2**N - 1 #1000 # Number of Eigenvalues calculated
 #TOL = 1e-10
 NUM_BINS = 25
 
 SAVETEXT = False
-SAVEFIG = False
-FIGNAME = 'EigenvalueSpacings2.png'
+SAVEFIG = True
+FIGNAME = 'N_12_AnaTest.png'
 FIGTITLE = 'Comparison of the Numerical and Analytic solutions for the TFIM' #fr'Level spacings for the $h_x$ = {H_X} TFIM'
 
 # The identity matrix and 4 Pauli matrices in sparse form
@@ -163,6 +163,8 @@ def tfim_exact_energies(h_x):
     energies : numpy array, exact many-body energies in the relevant parity sector.
     """
 
+    print(f"Calculating exact Eigenvalue spectrum for h_x = {h_x}")
+
     if N % 2 != 0:
         raise ValueError("N must be even.")
 
@@ -170,23 +172,41 @@ def tfim_exact_energies(h_x):
 
     for parity in (-1,+1):
         if parity == +1:
-            ks = (2*np.arange(N) + 1) * np.pi / N
+            kstates = (2*np.arange(N) + 1) * np.pi / N
         elif parity == -1:
-            ks = 2*np.arange(N) * np.pi / N
-        else:
-            raise ValueError("parity must be +1 or -1")
+            kstates = 2*np.arange(N) * np.pi / N
 
-        eps = 2*np.sqrt(J**2 + h_x**2 - 2*J*h_x*np.cos(ks)) # Single-particle energies
-        E0 = -0.5 * np.sum(eps) # Ground-state energy
+        if parity == +1: # The periodic fermion sector
+            eps = 2*np.sqrt(J**2 + h_x**2 - 2*J*h_x*np.cos(kstates)) # Single-particle energies
+            Egs = -0.5 * np.sum(eps) # Ground-state energy
 
-        for state in range(2**N):
-            occupation = np.array(
-                [(state >> k) & 1 for k in range(N)]
-            ) # Uses binary representations of numbers to create an array with the possible occupancies [e.g. 9 = 1001 = (1,0,0,1)]
+            for state in range(2**N):
+                occupation = np.array([(state >> i) & 1 for i in range(N)]) # Uses binary representations of numbers to create an array with the possible occupancies [e.g. 9 = 1001 = (1,0,0,1)]
 
-            if (-1)**np.sum(occupation) == parity: # Only considers states with the correct parity
-                E = E0 + np.sum(occupation * eps)
-                energies.append(E)
+                if (-1)**np.sum(occupation) == parity: # Only considers states with the correct parity
+                    Energy = Egs + np.sum(occupation * eps)
+                    energies.append(Energy)
+        else: # The antiperiodic fermion sector requires special handling for k=0 and k=pi modes (these are unpaired and can reduce the energy instead of just increase it)
+            special_states = [0,N//2] # These are the states where k=0 or k=pi.
+            regular_states = [i for i in range(N) if i not in special_states]
+
+            eps_regular = 2*np.sqrt(J**2 + h_x**2 - 2*J*h_x*np.cos(kstates[regular_states])) # Regular single-particle energies
+            Azero = 2*(h_x - J) # Coefficients for the 0 and pi modes
+            Api = 2*(h_x + J)
+            Egs = -0.5 * np.sum(eps_regular) # Zero-occupation energy (Not necessarily ground state since the k=0 occupied state can sometimes lower the energy.)
+
+            for state in range(2**N):
+                occupation = np.array([(state >> i) & 1 for i in range(N)]) # Uses binary representations of numbers to create an array with the possible occupancies [e.g. 9 = 1001 = (1,0,0,1)]
+
+                if (-1)**np.sum(occupation) == parity: # Only considers states with the correct parity
+
+                    n0 = occupation[0] # Whether the spacial states are occupied or not (n0,npi = 0 or 1)
+                    npi = occupation[N//2]
+
+                    Energy = Egs + np.sum(occupation[regular_states] * eps_regular)
+                    Energy += Azero * (n0 - 0.5)
+                    Energy += Api * (npi - 0.5)
+                    energies.append(Energy)
 
     return np.sort(np.array(energies))
 
@@ -200,7 +220,7 @@ def print_eigs(evals,evecs):
         print(f"{evals[i].real:.6f}")
         #print(f"{np.round(np.real(evecs[:,i]),3)}")
 
-def create_multiple_plots(plots, figsize=(12,8),title=None):
+def create_multiple_plots(plots, figsize=(12,4),title=None):
     """ 
     Creates a figure with a variable number of subplots. [Created with the aid of ChatGPT]
 
@@ -222,9 +242,9 @@ def create_multiple_plots(plots, figsize=(12,8),title=None):
     fig : matplotlib.figure.Figure 
     """
 
-    print(f"Creating figure.")
+    print(f"\nCreating figure.")
     n_plots = len(plots) 
-    n_cols = 2 
+    n_cols = 3 
     n_rows = int(np.ceil(n_plots / n_cols))
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
@@ -304,23 +324,57 @@ def exact_comparison_plot(ax,plot_data):
     plot_data: tuple of data (num_data,ana_data).
     """
     num_data,ana_data = plot_data
+    max_dif = np.max(np.abs(num_data-ana_data))
 
     i = np.arange(len(num_data))
 
-    ax.scatter(i,ana_data, marker = "s", color = 'y', label = 'Analytically calculated eigenvalues')
-    ax.scatter(i,num_data, marker = "x", color = 'b', label = 'Numerically solved eigenvalues')
+    ax.scatter(i,ana_data, marker = "s", color = 'y', label = 'Analytic eigenvalues')
+    ax.scatter(i,num_data, marker = ".", color = 'b', label = 'Numerical eigenvalues')
 
-    ax.legend()
+    ax.legend(title = f"Maximum difference = {max_dif:.3}", loc='upper left')
+
+def assemble_comparison_plot_dict(data,h_x):
+    """
+    Creates the required dictionary for the create_multiple_plots_function.
+
+    Parameters
+    ----------
+    data: numpy array or tuple of arrays
+    h_x: h_x value for title
+
+    Returns
+    ----------
+    Dictionary
+    """
+
+    dict = {
+        "plot": exact_comparison_plot,
+        "plotdata": (data),
+        "title": fr'$N$ = {N},   $h_x$ = {h_x}',
+        "xlabel": 'Eigenvalue Number',
+        "ylabel": 'Energy Eigenvalue',
+    }
+    return dict
+
 #----------------------------------------------------------------------
 # Main code (Call funcitons)
 
 def main():
+
+    #-----------------------------------------
+    # Prepare required empty lists
+    #-----------------------------------------
+
     sigmaZ_list = assembleZ_i()
     sigmaX_list = assembleX_i()
 
-    H_Z_list = [0.1,0.2,0.3,0.4] #[0,0.2,0.4,0.6,0.8,1.0]
+    H_X_list = [0, 0.3, 1.2] #[0, 0.05, 0.2, 0.5, 0.7, 0.8, 0.95, 1.05, 1.2]
+    #H_Z_list = [0.1,0.2,0.3,0.4] #[0,0.2,0.4,0.6,0.8,1.0]
     plots_list = []
 
+    #------------------------------------------
+    # Compare energy spacings for different h_z 
+    #------------------------------------------
 
     #for i in range(len(H_Z_list)):
 
@@ -334,23 +388,27 @@ def main():
     #    eigenvalue_spacings_real = np.real_if_close(eigenvalue_spacings,tol=100)
     #    plots_list.append(assemble_spacings_plot_dict((eigenvalue_spacings_real[1],x),H_Z_list[i]))
 
+    #------------------------------------------
+    # Compare eigenvalues with exact TFIM sol. for h_z = 0 
+    #------------------------------------------
+    
+    for h_x in H_X_list:
 
-    Ising_Ham = assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,H_Z,H_X)
-    eigenvalues,eigenvectors = find_eigs(Ising_Ham)
+        Ising_Ham = assmemble_Hamiltonian(sigmaZ_list,sigmaX_list,h_z=0,h_x=h_x)
+        eigenvalues,eigenvectors = find_eigs(Ising_Ham)
+
+        exact = tfim_exact_energies(h_x)[:NUM_EVALS]
+        #max_dif = np.max(eigenvalues-exact)
+        #print(f"Maximum deviation: {max_dif}")
+
+        plots_list.append(assemble_comparison_plot_dict((eigenvalues,exact),h_x))
+
+    #------------------------------------------
+    # Output text and generate figure
+    #------------------------------------------
 
     #print(eigenvalue_spacings[0])
-    #print(eigenvalues)
-    exact = tfim_exact_energies(H_X)[:NUM_EVALS]
-    dif = eigenvalues-exact
-    print(f"Maximum deviation: {np.max(dif)}")
-
-    plots_list = [{
-        "plot": exact_comparison_plot,
-        "plotdata": (eigenvalues,exact),
-        "title": fr'$h_x$ = {H_X}',
-        "xlabel": 'Eigenvalue Number',
-        "ylabel": 'Energy',
-    }]
+    #print(eigenvalues)    
     
     fig = create_multiple_plots(plots_list,title = FIGTITLE)
     if SAVEFIG:

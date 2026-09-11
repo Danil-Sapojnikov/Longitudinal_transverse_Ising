@@ -24,7 +24,7 @@ NUM_EVALS = 2**N - 1 #1000 # Number of Eigenvalues calculated
 NUM_BINS = 25
 
 SAVETEXT = False
-SAVEFIG = True
+SAVEFIG = False
 FIGNAME = 'N_12_AnaTest.png'
 FIGTITLE = 'Comparison of the Numerical and Analytic solutions for the TFIM' #fr'Level spacings for the $h_x$ = {H_X} TFIM'
 

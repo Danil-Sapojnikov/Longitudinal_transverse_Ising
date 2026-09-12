@@ -10,6 +10,10 @@
 
 * This verison utilises the QuSpin package.
 ***********************************************************************
+Notes:
+- Incorporate Ns_block_est
+- Calculate eigenvalues immediately (don't store Hamiltonian list) (if only need eigvals maybe write separate function for this)
+- Multithreading
 """
 
 import numpy as np
@@ -18,22 +22,23 @@ import matplotlib.pyplot as plt
 #import quspin
 from quspin.basis import spin_basis_1d
 from quspin.operators import hamiltonian
+#from quspin.tools.block_tools import block_diag_hamiltonian
 
 #----------------------------------------------------------------------
 
-L = 4 # Number of elements in chain (L>=2)
+L = 12 # Number of elements in chain (L>=2)
 J = 1.0 # Exchange coupling constant
-H_X = 1.05 # Transverse field
-H_Z = 0 # Longitudinal field
+H_X = 1.5 # Transverse field
+H_Z = 1.6 # Longitudinal field
 
-NUM_EVALS = 2**L - 1 #100 # Number of Eigenvalues calculated
+NUM_EVALS = 2**L - 1 # Number of Eigenvalues calculated
 TOL = 1e-12
-NUM_BINS = 25
+NUM_BINS = 50
 
 SAVETEXT = False
 SAVEFIG = False
-FIGNAME = 'L_12_AnaTest.png'
-FIGTITLE = 'Comparison of the Numerical and Analytic solutions for the TFIM' #fr'Level spacings for the $h_x$ = {H_X} TFIM'
+FIGNAME = 'L_4_AnaTest_QuSpin.png'
+FIGTITLE = fr'Level spacings for the $h_x$ = {H_X} TFIM' #'Comparison of the Numerical and Analytic solutions for the TFIM'
 
 #----------------------------------------------------------------------
 ### Assemble the Longitudinal + Transverse field Ising Hamiltonian
@@ -74,7 +79,7 @@ def assemble_ising_hamiltonian(couplings, sites, periodic=True):
 
     return Ising_Hamiltonian
 
-def assemble_ising_ham_pk_blocks(couplings, sites, periodic=True):
+def assemble_ising_ham_pkz_blocks(couplings, sites, periodic=True):
     """
     Assembles the longitudinal + transverse field Ising chain hamiltonian of the form:
     H = J*sum(sigmaZ_i sigmaZ_(i+1)) + hx*sum(sigmaX_i) + hz*sum(sigmaZ_i)
@@ -91,18 +96,61 @@ def assemble_ising_ham_pk_blocks(couplings, sites, periodic=True):
     Ising_Hamiltonian: list of QuSpin Hamiltonian quantum operator objects. (block-diagonalised form of Ising_ham)
     """
     if not periodic:
-        print("The Ising chain must be periodic or infinite to diagonalise it into k-blocks")
+        print("The Ising chain must be periodic or infinite to diagonalise it into k-blocks") # Sanity check in case I accidentally try to use this function on a non-periodic chain
         return
 
-    Jzz, hx, hz = couplings
+    Jzz, hx, hz = couplings    
     print(f"\nAssembling Hamiltonian with transverse field h_x = {hx} and longitudinal field h_z = {hz}.")
 
-    kblocks = [i for i in range(sites)]
-    Ham_list = []
+    Jzz_list = [[Jzz, j,(j+1)%sites] for j in range(sites)] # L bonds with PBC
+    hx_list = [[hx,j] for j in range(sites)] # L sites transverse field coupling
+    hz_list = [[hz,j] for j in range(sites)] # L sites longitudinal field coupling
 
-    for parity in (+1,-1):
-        for kblo in kblocks:
-            symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, pblock=parity)
+    H_terms_static = [['zz',Jzz_list],
+                      ['x',hx_list],
+                      ['z',hz_list],
+                      ]
+    H_terms_dynamic = []
+
+    Ham_list = []
+    # parity_list = []
+    # kblock_list = []
+
+    parity_kstates = {0} # The k = 0 (and k=pi for even L) blocks can be block-diagnalised further into parity blocks since k = -k
+    if sites % 2 == 0:
+        parity_kstates.add(sites//2)
+
+    if hz == 0:
+        for kblo in range(sites):
+            for zflip in (+1,-1):
+                if kblo in parity_kstates:
+                    for parity in (+1,-1):
+                        symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, pblock=parity, zblock=zflip) #check_symm disbled below due to a 'z' coupling in H with hz=0
+                        Ham_list.append(hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False))
+                        # parity_list.append(parity)
+                        # kblock_list.append(kblo)
+                else:
+                    symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, zblock=zflip)
+                    Ham_list.append(hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False))
+                    # parity_list.append(None)
+                    # kblock_list.append(kblo)
+    else:
+        for kblo in range(sites):
+            if kblo in parity_kstates:
+                for parity in (+1,-1):
+                    symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, pblock=parity)
+                    Ham_list.append(hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis))
+                    # parity_list.append(parity)
+                    # kblock_list.append(kblo)
+            else:
+                symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo)
+                Ham_list.append(hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis))
+                # parity_list.append(None)
+                # kblock_list.append(kblo)
+
+    print(f"{len(Ham_list)}-block Hamiltonian assembled!")
+
+    return Ham_list # [Ham_list, parity_list, kblock_list]
 
 #----------------------------------------------------------------------
 ### Find the Eigenvalues and Eigenvectors of the Hamiltonian, then the energy spacings
@@ -113,7 +161,7 @@ def find_eigs(Hamiltonian, sparse=False, num_eigs=1, return_evecs=False):
 
     Parameters
     ----------
-    Hamiltonian: A QuSpin Hamiltonian object
+    Hamiltonian: A QuSpin Hamiltonian object or a list of Hamiltonian objects
     sparse: Boolean, finds all the eigenvalues using numpy dense methods if False, only some using scipy.sparse methods if True
     num_eigs: Number of eigenvalues and eigenvectors to find using sparse methods
     return_evecs: If false then does not calculate the eigenvectors and returns an empty list for evecs
@@ -121,23 +169,58 @@ def find_eigs(Hamiltonian, sparse=False, num_eigs=1, return_evecs=False):
     Returns
     ----------
     evals, evecs: Numpy arrays of the eigenvalues and eigenvectors, with each eigenvector arranged in column form evecs[:,i]
+                  Note: if block diagonal list AND return_evecs true, this returns two lists of arrays instead, each corresponding to the Hamiltonian blocks. 
+                        In this case the eigenvalues are only sorted within each block, and not within the overall array. If return_evecs is False then the
+                        eigenvalues are still sorted as normal across the whole Hamiltonian.
     """
     evecs = []
 
-    if sparse:
-        print(f"\nFinding the first {num_eigs} eigenvalues using sparse methods.")
+    if isinstance(Hamiltonian,list): # This section is for easily calculating the eigenvalue set if you have a block-diagonalised Hamiltonian as a list of hamiltonians
         if return_evecs:
-            evals,evecs = Hamiltonian.eigsh(k=num_eigs, which='SA', tol=TOL, return_eigenvectors=return_evecs)
+            evals = []
         else:
-            evals = Hamiltonian.eigsh(k=num_eigs, which='SA', tol=TOL, return_eigenvectors=return_evecs)
-    else:
-        print(f"\nFinding all eigenvalues using dense methods.")
-        if return_evecs:
-            evals,evecs = Hamiltonian.eigh()
-        else:
-            evals = Hamiltonian.eigvalsh()
+            evals = np.empty(0)
 
-    print(f"{len(evals)} eigenvalues found.")
+        for i, Ham_block in enumerate(Hamiltonian):
+            if sparse:
+                print(f"\nFinding the first {num_eigs} eigenvalues in block {i} using sparse methods.")
+                if return_evecs:
+                    evals_block,evecs_block = Ham_block.eigsh(k=num_eigs, which='SA', tol=TOL, return_eigenvectors=True)
+                else:
+                    evals_block = Ham_block.eigsh(k=num_eigs, which='SA', tol=TOL, return_eigenvectors=False)
+            else:
+                print(f"\nFinding all eigenvalues in block {i} using dense methods.")
+                if return_evecs:
+                    evals_block,evecs_block = Ham_block.eigh()
+                else:
+                    evals_block = Ham_block.eigvalsh()
+
+            if return_evecs:
+                evals.append(evals_block)
+                evecs.append(evecs_block)
+            else:
+                evals = np.hstack((evals,evals_block))
+        if not return_evecs:
+            evals.sort()
+
+    else:
+        if sparse:
+            print(f"\nFinding the first {num_eigs} eigenvalues using sparse methods.")
+            if return_evecs:
+                evals,evecs = Hamiltonian.eigsh(k=num_eigs, which='SA', tol=TOL, return_eigenvectors=return_evecs)
+            else:
+                evals = Hamiltonian.eigsh(k=num_eigs, which='SA', tol=TOL, return_eigenvectors=return_evecs)
+        else:
+            print(f"\nFinding all eigenvalues using dense methods.")
+            if return_evecs:
+                evals,evecs = Hamiltonian.eigh()
+            else:
+                evals = Hamiltonian.eigvalsh()
+
+    if isinstance(Hamiltonian,list) and return_evecs:
+        print(f"{np.sum(len(evals[i]) for i in range(len(evals)))} eigenvalues found.")
+    else:
+        print(f"{len(evals)} eigenvalues found.")
 
     return evals,evecs
 
@@ -244,7 +327,7 @@ def tfim_exact_energies(num, j, h_x):
 #----------------------------------------------------------------------
 ### Output functions
 
-def create_multiple_plots(plots, figsize=(12,12),title=None):
+def create_multiple_plots(plots, figsize=(12,12),title=None, n_cols=1):
     """ 
     Creates a figure with a variable number of subplots. [Created with the aid of ChatGPT]
 
@@ -268,7 +351,6 @@ def create_multiple_plots(plots, figsize=(12,12),title=None):
 
     print(f"\nCreating figure.")
     n_plots = len(plots) 
-    n_cols = 3 
     n_rows = int(np.ceil(n_plots / n_cols))
 
     fig, axes = plt.subplots(n_rows, n_cols, figsize=figsize)
@@ -302,6 +384,9 @@ def print_eigs(evals):
     for i in range(len(evals)):
         print(f"\nEigenvalue {i+1}")
         print(f"{evals[i].real:.6f}")
+
+#----------------------------------------------------------------------
+### Plot functions
 
 def spacings_plot(ax,plot_data):
     """
@@ -363,7 +448,7 @@ def exact_comparison_plot(ax,plot_data):
 
     ax.legend(title = f"Maximum difference = {max_dif:.3}", loc='upper left')
 
-def assemble_comparison_plot_dict(data,h_x,num):
+def assemble_exact_comparison_plot_dict(data,h_x,num):
     """
     Creates the required dictionary for the create_multiple_plots_function.
 
@@ -371,6 +456,7 @@ def assemble_comparison_plot_dict(data,h_x,num):
     ----------
     data: numpy array or tuple of arrays
     h_x: h_x value for title
+    num: num values for title
 
     Returns
     ----------
@@ -395,30 +481,60 @@ def main():
     # Prepare empty lists and variables
     #-----------------------------------------
 
-    H_X_list = [0, 0.3, 1.2]
-    num_list = [4, 8]
+    # H_X_list = [0, 0.3, 1.2]
+    H_Z_list = [0, 0.1, 0.4, 1.1, 1.2, 1.4, 1.5, 1.6, 1.8]
+    # num_list = [4, 8, 12]
+
+    x = np.linspace(0,7,1000)
+
+    spacings = np.empty(0)
     plots_list = []
 
     #-----------------------------------------
-    # Compare eigenvalues with exact TFIM sol. for h_z = 0 
+    # Compare eigenvalues with exact TFIM sol. for h_z = 0
     #-----------------------------------------
 
-    for num in num_list:
+    # for num in num_list:
 
-        for h_x in H_X_list:
+    #     for h_x in H_X_list:
 
-            Ising_Ham = assemble_ising_hamiltonian(couplings=(J,h_x,0), sites=num)
-            eigenvalues, eigenvectors = find_eigs(Hamiltonian=Ising_Ham)
+    #         Ising_Ham = assemble_ising_ham_pkz_blocks(couplings=(J,h_x,0), sites=num)
+    #         eigenvalues = find_eigs(Ising_Ham)
 
-            exact = tfim_exact_energies(num=num, j=J, h_x=h_x)[:len(eigenvalues)]
+    #         exact = tfim_exact_energies(num=num, j=J, h_x=h_x)[:len(eigenvalues)]
 
-            plots_list.append(assemble_comparison_plot_dict((eigenvalues,exact),h_x,num))
+    #         plots_list.append(assemble_exact_comparison_plot_dict((eigenvalues,exact),h_x,num))
 
-    
+    #-----------------------------------------
+    # Calculate spacings
+    #-----------------------------------------
+
+    # for hz in H_Z_list:
+
+    #     Ising_Hamiltonian = assemble_ising_ham_pkz_blocks(couplings=(J,H_X,hz), sites=L)
+    #     for symm_block in Ising_Hamiltonian:
+    #         block_evals, empty_evecs = find_eigs(symm_block)
+    #         unscaled_spacings, block_spacings = find_spacings(block_evals)
+    #         spacings = np.hstack((spacings,block_spacings))
+    #     spacings.sort()
+
+    #     plots_list.append(assemble_spacings_plot_dict((spacings,x),hz))
+
+
+
+    Ising_Hamiltonian = assemble_ising_ham_pkz_blocks(couplings=(J,H_X,H_Z), sites=L)
+    for symm_block in Ising_Hamiltonian:
+        block_evals, empty_evecs = find_eigs(symm_block)
+        unscaled_spacings, block_spacings = find_spacings(block_evals)
+        spacings = np.hstack((spacings,block_spacings))
+    spacings.sort()
+
+    plots_list.append(assemble_spacings_plot_dict((spacings,x),H_Z))
+
     #------------------------------------------
     # Output text and generate figure
     #------------------------------------------ 
-    
+
     fig = create_multiple_plots(plots_list,title = FIGTITLE)
     if SAVEFIG:
         plt.savefig(FIGNAME, transparent = True) 

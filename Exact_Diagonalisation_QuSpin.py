@@ -12,9 +12,22 @@
 ***********************************************************************
 Notes:
 - Incorporate Ns_block_est
-- Calculate eigenvalues immediately (don't store Hamiltonian list) (if only need eigvals maybe write separate function for this)
 - Multithreading
 """
+#----------------------------------------------------------------------
+### Set number of threads for multithreading
+
+import os
+
+#os.environ["MKL_NUM_THREADS"] = "1"
+#os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "8" #For L16: 4 = 125.432, 8 = 124.422
+
+#----------------------------------------------------------------------
+### Import relevant packages
+
+import time
+start = time.perf_counter()
 
 import numpy as np
 import matplotlib.pyplot as plt
@@ -24,9 +37,12 @@ from quspin.basis import spin_basis_1d
 from quspin.operators import hamiltonian
 #from quspin.tools.block_tools import block_diag_hamiltonian
 
+# from threadpoolctl import threadpool_info
+# print(threadpool_info())
+
 #----------------------------------------------------------------------
 
-L = 12 # Number of elements in chain (L>=2)
+L = 16 # Number of elements in chain (L>=2)
 J = 1.0 # Exchange coupling constant
 H_X = 1.5 # Transverse field
 H_Z = 1.6 # Longitudinal field
@@ -37,8 +53,9 @@ NUM_BINS = 50
 
 SAVETEXT = False
 SAVEFIG = False
-FIGNAME = 'L_4_AnaTest_QuSpin.png'
-FIGTITLE = fr'Level spacings for the $h_x$ = {H_X} TFIM' #'Comparison of the Numerical and Analytic solutions for the TFIM'
+FIGNAME = 'L_1_r_test.png'
+FIGTITLE = fr'Ratio of consecutive energy spacings for the $h_x$ = {H_X} TFIM'
+            #fr'Level spacings for the $h_x$ = {H_X} TFIM' #'Comparison of the Numerical and Analytic solutions for the TFIM'
 
 #----------------------------------------------------------------------
 ### Assemble the Longitudinal + Transverse field Ising Hamiltonian
@@ -152,6 +169,74 @@ def assemble_ising_ham_pkz_blocks(couplings, sites, periodic=True):
 
     return Ham_list # [Ham_list, parity_list, kblock_list]
 
+def find_eigvals_no_assembly(couplings, sites, periodic=True):
+    """
+    Assembles the longitudinal + transverse field Ising chain hamiltonian of the form:
+    H = J*sum(sigmaZ_i sigmaZ_(i+1)) + hx*sum(sigmaX_i) + hz*sum(sigmaZ_i)
+    block-diagonalised into (p=+1(kstates),p=-1(kstates)) form. 
+    Solves for the eigenvalues for each block before preparing the next block in order to conserve memory.
+
+    Parameters
+    ----------
+    couplings: (Jzz,hx,hz) = tuple of floats.
+    sites: number of spins in the Ising chain (Typically N or L).
+    periodic: Boolean which determines if PBC are imposed on the chain (i.e. S_(N+1)= S_1 if True).
+
+    Returns
+    ----------
+    Eigs_list: list of numpy arrays with each one containing the eigenvalues for a given symmetry block
+    """
+    if not periodic:
+        print("The Ising chain must be periodic or infinite to diagonalise it into k-blocks") # Sanity check in case I accidentally try to use this function on a non-periodic chain
+        return
+
+    Jzz, hx, hz = couplings    
+    print(f"\nAssembling Hamiltonian with transverse field h_x = {hx} and longitudinal field h_z = {hz}.")
+
+    Jzz_list = [[Jzz, j,(j+1)%sites] for j in range(sites)] # L bonds with PBC
+    hx_list = [[hx,j] for j in range(sites)] # L sites transverse field coupling
+    hz_list = [[hz,j] for j in range(sites)] # L sites longitudinal field coupling
+
+    H_terms_static = [['zz',Jzz_list],
+                      ['x',hx_list],
+                      ['z',hz_list],
+                      ]
+    H_terms_dynamic = []
+
+    Eigs_list = []
+
+    parity_kstates = {0} # The k = 0 (and k=pi for even L) blocks can be block-diagnalised further into parity blocks since k = -k
+    if sites % 2 == 0:
+        parity_kstates.add(sites//2)
+
+    if hz == 0:
+        for kblo in range(sites):
+            for zflip in (+1,-1):
+                if kblo in parity_kstates:
+                    for parity in (+1,-1):
+                        symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, pblock=parity, zblock=zflip) #check_symm disbled below due to a 'z' coupling in H with hz=0
+                        block_hamiltonian = hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False)
+                        Eigs_list.append(find_eigs(block_hamiltonian)[0])
+                else:
+                    symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, zblock=zflip)
+                    block_hamiltonian = hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False)
+                    Eigs_list.append(find_eigs(block_hamiltonian)[0])
+    else:
+        for kblo in range(sites):
+            if kblo in parity_kstates:
+                for parity in (+1,-1):
+                    symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, pblock=parity)
+                    block_hamiltonian = hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False)
+                    Eigs_list.append(find_eigs(block_hamiltonian)[0])
+            else:
+                symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo)
+                block_hamiltonian = hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False)
+                Eigs_list.append(find_eigs(block_hamiltonian)[0])
+
+    print(f"{len(Eigs_list)}-block Hamiltonian solved!")
+
+    return Eigs_list
+
 #----------------------------------------------------------------------
 ### Find the Eigenvalues and Eigenvectors of the Hamiltonian, then the energy spacings
 
@@ -236,11 +321,13 @@ def find_spacings(eigvals):
     ----------
     eigvals_space, eigvals_space_scaled: numpy arrays of: the absolute gaps between consecutive energies, the gaps between consecutive energies divided by the mean spacing
     """
-    eigvals = np.sort(eigvals)
-    eigvals_shifted = np.insert(eigvals, 0, eigvals[0])
-    eigvals_shifted = np.delete(eigvals_shifted, -1)
+    # eigvals = np.sort(eigvals)
+    # eigvals_shifted = np.insert(eigvals, 0, eigvals[0])
+    # eigvals_shifted = np.delete(eigvals_shifted, -1)
 
-    eigvals_space = eigvals - eigvals_shifted
+    # eigvals_space = eigvals - eigvals_shifted
+
+    eigvals_space = np.diff(eigvals)
 
     mean = np.mean(eigvals_space)
     eigvals_space_scaled = eigvals_space/mean
@@ -256,6 +343,22 @@ def wigner_dist(x):
     power = -np.pi / 4 * x**2
 
     return np.pi/2 * x * np.exp(power)
+
+def adjacent_gap_ratio(spacings):
+    """
+    Finds the mean ratio of adjacent energy spacings according to r_n = min(delta_n,delta_(n+1))/max(delta_n,delta_(n+1)). <r> = mean(r_n).
+    
+    Parameters
+    ----------
+    spacings: a numpy array of the gaps between consecutive energy eigenvalues.
+
+    Returns
+    ----------
+    <r>: a float of the mean ratio of adjacent enegy spacings for that symmetry sector
+    """
+    r = np.minimum(spacings[:-1],spacings[1:]) / np.maximum(spacings[:-1],spacings[1:])
+
+    return np.mean(r)
 
 #----------------------------------------------------------------------
 ### Analytic solution to the TFIM (h_z = 0) for benchmarking
@@ -472,6 +575,41 @@ def assemble_exact_comparison_plot_dict(data,h_x,num):
     }
     return dict
 
+def r_val_plot(ax,plot_data):
+    """
+    Plots <r> against hz.
+
+    Parameters
+    ----------
+    ax: Axes object to plot the graph on
+    plot_data: tuple of data (hz,rval).
+    """
+    hz,rval = plot_data
+
+    ax.plot(hz, rval)
+
+def assemble_r_val_plot_dict(data):
+    """
+    Creates the required dictionary for the create_multiple_plots function.
+
+    Parameters
+    ----------
+    data: numpy array or tuple of arrays
+
+    Returns
+    ----------
+    Dictionary
+    """
+
+    dict = {
+        "plot": r_val_plot,
+        "plotdata": (data),
+        "xlabel": r'$h_z$',
+        "ylabel": '<r>',
+    }
+    return dict
+    
+
 #----------------------------------------------------------------------
 ### Main code (Call functions)
 
@@ -482,12 +620,13 @@ def main():
     #-----------------------------------------
 
     # H_X_list = [0, 0.3, 1.2]
-    H_Z_list = [0, 0.1, 0.4, 1.1, 1.2, 1.4, 1.5, 1.6, 1.8]
+    H_Z_list = np.linspace(0,2,100)#[0, 0.1, 0.4, 1.1, 1.2, 1.4, 1.5, 1.6, 1.8]
     # num_list = [4, 8, 12]
 
     x = np.linspace(0,7,1000)
 
     spacings = np.empty(0)
+    r_vals = []
     plots_list = []
 
     #-----------------------------------------
@@ -513,33 +652,50 @@ def main():
 
     #     Ising_Hamiltonian = assemble_ising_ham_pkz_blocks(couplings=(J,H_X,hz), sites=L)
     #     for symm_block in Ising_Hamiltonian:
+    #         r_vals_block = []
     #         block_evals, empty_evecs = find_eigs(symm_block)
-    #         unscaled_spacings, block_spacings = find_spacings(block_evals)
-    #         spacings = np.hstack((spacings,block_spacings))
-    #     spacings.sort()
+    #         unscaled_block_spacings, block_spacings = find_spacings(block_evals)
+    #         r_vals_block.append(adjacent_gap_ratio(unscaled_block_spacings))
+    #     #     spacings = np.hstack((spacings,block_spacings))
+    #     # spacings.sort()
+    #     r_vals.append(np.mean(r_vals_block))
 
-    #     plots_list.append(assemble_spacings_plot_dict((spacings,x),hz))
+    #     # plots_list.append(assemble_spacings_plot_dict((spacings,x),hz))
+    # plots_list.append(assemble_r_val_plot_dict((H_Z_list,np.array(r_vals))))
 
 
+    # Ising_Hamiltonian = assemble_ising_ham_pkz_blocks(couplings=(J,H_X,H_Z), sites=L)
+    # for symm_block in Ising_Hamiltonian:
+    #     block_evals, empty_evecs = find_eigs(symm_block)
+    #     unscaled_block_spacings, block_spacings = find_spacings(block_evals)
+    #     r_vals.append(adjacent_gap_ratio(unscaled_block_spacings))
+    #     spacings = np.hstack((spacings,block_spacings))
+    # spacings.sort()
 
-    Ising_Hamiltonian = assemble_ising_ham_pkz_blocks(couplings=(J,H_X,H_Z), sites=L)
-    for symm_block in Ising_Hamiltonian:
-        block_evals, empty_evecs = find_eigs(symm_block)
-        unscaled_spacings, block_spacings = find_spacings(block_evals)
-        spacings = np.hstack((spacings,block_spacings))
-    spacings.sort()
+    # plots_list.append(assemble_spacings_plot_dict((spacings,x),H_Z))
 
-    plots_list.append(assemble_spacings_plot_dict((spacings,x),H_Z))
+    counter = 0
+    Eigs = find_eigvals_no_assembly(couplings=(J,H_X,H_Z), sites=L)
+    for i in range(len(Eigs)):
+        counter += len(Eigs[i])
+    print(f"{counter} out of {2**L} Eigenvalues found.")
+
 
     #------------------------------------------
     # Output text and generate figure
     #------------------------------------------ 
 
-    fig = create_multiple_plots(plots_list,title = FIGTITLE)
+    #print(r_vals)
+    #print(np.mean(r_vals))
+
+    #fig = create_multiple_plots(plots_list,title = FIGTITLE)
     if SAVEFIG:
         plt.savefig(FIGNAME, transparent = True) 
     plt.show()
     plt.close()
+
+    end = time.perf_counter()
+    print(f"{end - start:.3f} seconds to run program")
 
 #----------------------------------------------------------------------
 

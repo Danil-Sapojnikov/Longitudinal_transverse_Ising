@@ -42,20 +42,20 @@ from quspin.operators import hamiltonian
 
 #----------------------------------------------------------------------
 
-L = 16 # Number of elements in chain (L>=2)
+L = 17 # Number of elements in chain (L>=2)
 J = 1.0 # Exchange coupling constant
 H_X = 1.5 # Transverse field
 H_Z = 1.6 # Longitudinal field
 
-NUM_EVALS = 2**L - 1 # Number of Eigenvalues calculated
+NUM_EVALS = 100 # Number of Eigenvalues calculated if sparse
 TOL = 1e-12
 NUM_BINS = 50
 
 SAVETEXT = False
-SAVEFIG = False
-FIGNAME = 'L_1_r_test.png'
-FIGTITLE = fr'Ratio of consecutive energy spacings for the $h_x$ = {H_X} TFIM'
-            #fr'Level spacings for the $h_x$ = {H_X} TFIM' #'Comparison of the Numerical and Analytic solutions for the TFIM'
+SAVEFIG = True
+FIGNAME = 'L_17_spacings.png'
+FIGTITLE = fr'Level spacings for the $L$ = {L}, $h_x$ = {H_X} TFIM'
+            #fr'Ratio of consecutive energy spacings for the $h_x$ = {H_X} TFIM' #'Comparison of the Numerical and Analytic solutions for the TFIM'
 
 #----------------------------------------------------------------------
 ### Assemble the Longitudinal + Transverse field Ising Hamiltonian
@@ -169,7 +169,7 @@ def assemble_ising_ham_pkz_blocks(couplings, sites, periodic=True):
 
     return Ham_list # [Ham_list, parity_list, kblock_list]
 
-def find_eigvals_no_assembly(couplings, sites, periodic=True):
+def find_eigvals_no_assembly(couplings, sites, periodic=True, sparse=False, num_eigs=1,):
     """
     Assembles the longitudinal + transverse field Ising chain hamiltonian of the form:
     H = J*sum(sigmaZ_i sigmaZ_(i+1)) + hx*sum(sigmaX_i) + hz*sum(sigmaZ_i)
@@ -216,22 +216,22 @@ def find_eigvals_no_assembly(couplings, sites, periodic=True):
                     for parity in (+1,-1):
                         symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, pblock=parity, zblock=zflip) #check_symm disbled below due to a 'z' coupling in H with hz=0
                         block_hamiltonian = hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False)
-                        Eigs_list.append(find_eigs(block_hamiltonian)[0])
+                        Eigs_list.append(find_eigs(block_hamiltonian, sparse=sparse, num_eigs=num_eigs,)[0])
                 else:
                     symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, zblock=zflip)
                     block_hamiltonian = hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False)
-                    Eigs_list.append(find_eigs(block_hamiltonian)[0])
+                    Eigs_list.append(find_eigs(block_hamiltonian, sparse=sparse, num_eigs=num_eigs,)[0])
     else:
         for kblo in range(sites):
             if kblo in parity_kstates:
                 for parity in (+1,-1):
                     symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo, pblock=parity)
                     block_hamiltonian = hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False)
-                    Eigs_list.append(find_eigs(block_hamiltonian)[0])
+                    Eigs_list.append(find_eigs(block_hamiltonian, sparse=sparse, num_eigs=num_eigs,)[0])
             else:
                 symm_basis = spin_basis_1d(L=sites, a=1, kblock=kblo)
                 block_hamiltonian = hamiltonian(static_list=H_terms_static, dynamic_list=H_terms_dynamic, basis=symm_basis, check_symm=False)
-                Eigs_list.append(find_eigs(block_hamiltonian)[0])
+                Eigs_list.append(find_eigs(block_hamiltonian, sparse=sparse, num_eigs=num_eigs,)[0])
 
     print(f"{len(Eigs_list)}-block Hamiltonian solved!")
 
@@ -430,7 +430,7 @@ def tfim_exact_energies(num, j, h_x):
 #----------------------------------------------------------------------
 ### Output functions
 
-def create_multiple_plots(plots, figsize=(12,12),title=None, n_cols=1):
+def create_multiple_plots(plots, figsize=(12,12),title=None, n_cols=3):
     """ 
     Creates a figure with a variable number of subplots. [Created with the aid of ChatGPT]
 
@@ -501,7 +501,7 @@ def spacings_plot(ax,plot_data):
     plot_data: tuple of data (histdata,x) where x is a linspaced array for the distributions.
     """
     scaled_spacings,x = plot_data
-    scaled_spacings = np.delete(scaled_spacings, np.where(scaled_spacings > 7*np.mean(scaled_spacings))) #removes large values to siplify display
+    scaled_spacings = np.delete(scaled_spacings, np.where(scaled_spacings > 5*np.mean(scaled_spacings))) #removes large values to siplify display
 
     ax.hist(scaled_spacings, bins=NUM_BINS, density = True, label = 'Calulated Differences')
     ax.plot(x,poisson_dist(x), label = 'Poisson Distribution', color = 'b')
@@ -620,10 +620,10 @@ def main():
     #-----------------------------------------
 
     # H_X_list = [0, 0.3, 1.2]
-    H_Z_list = np.linspace(0,2,100)#[0, 0.1, 0.4, 1.1, 1.2, 1.4, 1.5, 1.6, 1.8]
+    H_Z_list = [0, 0.1, 0.4, 1.1, 1.2, 1.4, 1.5, 1.6, 1.8] #np.linspace(0,2,100)
     # num_list = [4, 8, 12]
 
-    x = np.linspace(0,7,1000)
+    x = np.linspace(0,5,1000)
 
     spacings = np.empty(0)
     r_vals = []
@@ -674,12 +674,31 @@ def main():
 
     # plots_list.append(assemble_spacings_plot_dict((spacings,x),H_Z))
 
-    counter = 0
-    Eigs = find_eigvals_no_assembly(couplings=(J,H_X,H_Z), sites=L)
-    for i in range(len(Eigs)):
-        counter += len(Eigs[i])
-    print(f"{counter} out of {2**L} Eigenvalues found.")
 
+    for hz in H_Z_list:
+
+        Eig_blocks = find_eigvals_no_assembly(couplings=(J,H_X,hz), sites=L)
+        for Eigs in Eig_blocks:
+            N = len(Eigs)
+            low = int(0.2 * N)
+            high = int(0.8 * N)
+            bulk_eigs = Eigs[low:high]
+            unscaled_block_spacings, block_spacings = find_spacings(bulk_eigs)
+            spacings = np.concatenate((spacings,block_spacings))
+        spacings.sort()
+
+        plots_list.append(assemble_spacings_plot_dict((spacings,x),hz))
+
+
+    #------------------------------------------
+    # Completely diagonalise a given Hamiltonian
+    #------------------------------------------ 
+
+    # counter = 0
+    # Eigs = find_eigvals_no_assembly(couplings=(J,H_X,H_Z), sites=L)
+    # for i in range(len(Eigs)):
+    #     counter += len(Eigs[i])
+    # print(f"{counter} out of {2**L} Eigenvalues found.")
 
     #------------------------------------------
     # Output text and generate figure
@@ -688,14 +707,17 @@ def main():
     #print(r_vals)
     #print(np.mean(r_vals))
 
-    #fig = create_multiple_plots(plots_list,title = FIGTITLE)
+    fig = create_multiple_plots(plots_list,title = FIGTITLE)
     if SAVEFIG:
         plt.savefig(FIGNAME, transparent = True) 
-    plt.show()
-    plt.close()
 
     end = time.perf_counter()
     print(f"{end - start:.3f} seconds to run program")
+
+    plt.show()
+    plt.close()
+
+
 
 #----------------------------------------------------------------------
 
